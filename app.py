@@ -1,16 +1,83 @@
-
-import gradio as gr
+import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 
+
 # ============================================================
-# LOAD SAVED MODEL
+# PAGE SETUP
 # ============================================================
 
-final_clf = joblib.load("final_top25_classifier.pkl")
-feature_cols = joblib.load("final_feature_columns.pkl")
-topic_flag_cols = joblib.load("topic_flag_columns.pkl")
+st.set_page_config(
+    page_title="SDLP Post Performance Checker",
+    page_icon="📊",
+    layout="wide"
+)
+
+
+# ============================================================
+# STYLING
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #f7f7f7;
+    }
+
+    .main-title {
+        background: linear-gradient(135deg, #006747, #004c36);
+        padding: 30px;
+        border-radius: 18px;
+        color: white;
+        margin-bottom: 25px;
+    }
+
+    .main-title h1 {
+        color: white;
+        margin-bottom: 5px;
+    }
+
+    .main-title p {
+        color: white;
+        font-size: 17px;
+        margin-bottom: 0;
+    }
+
+    .result-card {
+        background: white;
+        padding: 28px;
+        border-radius: 18px;
+        border-left: 7px solid #006747;
+        box-shadow: 0px 2px 10px rgba(0,0,0,0.08);
+        margin-top: 15px;
+    }
+
+    .small-note {
+        color: #666;
+        font-size: 14px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# LOAD MODEL
+# ============================================================
+
+@st.cache_resource
+def load_model():
+    model = joblib.load("final_top25_classifier.pkl")
+    feature_cols = joblib.load("final_feature_columns.pkl")
+    topic_cols = joblib.load("topic_flag_columns.pkl")
+
+    return model, feature_cols, topic_cols
+
+
+final_clf, feature_cols, topic_flag_cols = load_model()
 
 
 # ============================================================
@@ -55,7 +122,96 @@ days = [
 
 
 # ============================================================
-# BUILD INPUT ROW
+# HEADER
+# ============================================================
+
+st.markdown(
+    """
+    <div class="main-title">
+        <h1>SDLP Post Performance Checker</h1>
+        <p>
+            Data-driven pre-post decision support using historical SDLP social media data.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.write(
+    "Enter the details of a proposed Facebook or Instagram post to estimate "
+    "whether its characteristics are similar to historically high-performing SDLP posts."
+)
+
+
+# ============================================================
+# INPUTS
+# ============================================================
+
+left, right = st.columns(2)
+
+
+with left:
+
+    st.subheader("Post details")
+
+    account = st.selectbox(
+        "Account",
+        accounts
+    )
+
+    platform = st.radio(
+        "Platform",
+        platforms,
+        horizontal=True
+    )
+
+    followers = st.number_input(
+        "Current follower count",
+        min_value=1,
+        value=1000,
+        step=100,
+        help="Enter the current follower count for the selected account and platform."
+    )
+
+    post_format = st.selectbox(
+        "Post format",
+        formats
+    )
+
+
+with right:
+
+    st.subheader("Timing and content")
+
+    day = st.selectbox(
+        "Day of week",
+        days
+    )
+
+    hour = st.slider(
+        "Planned posting hour",
+        min_value=0,
+        max_value=23,
+        value=12,
+        step=1
+    )
+
+    posting_frequency = st.slider(
+        "Posting frequency (posts/week)",
+        min_value=0.0,
+        max_value=30.0,
+        value=7.0,
+        step=0.5
+    )
+
+    selected_topics = st.multiselect(
+        "Political topic(s)",
+        topic_flag_cols
+    )
+
+
+# ============================================================
+# BUILD MODEL INPUT
 # ============================================================
 
 def build_model_row(
@@ -74,77 +230,99 @@ def build_model_row(
         columns=feature_cols
     )
 
-    # Numeric variables
+
+    # Numeric features
+
     if "Post Hour" in row.columns:
         row.loc[0, "Post Hour"] = float(hour)
 
     if "Posting Frequency (posts/week)" in row.columns:
-        row.loc[0, "Posting Frequency (posts/week)"] = float(posting_frequency)
+        row.loc[
+            0,
+            "Posting Frequency (posts/week)"
+        ] = float(posting_frequency)
 
     if "Current Followers" in row.columns:
-        row.loc[0, "Current Followers"] = float(followers)
+        row.loc[
+            0,
+            "Current Followers"
+        ] = float(followers)
 
-    # Account
+
+    # Account dummy
+
     account_col = f"Account_{account}"
+
     if account_col in row.columns:
         row.loc[0, account_col] = 1
 
-    # Platform
+
+    # Platform dummy
+
     platform_col = f"Platform_{platform}"
+
     if platform_col in row.columns:
         row.loc[0, platform_col] = 1
 
-    # Format
+
+    # Format dummy
+
     format_col = f"Post Format (Clean)_{post_format}"
+
     if format_col in row.columns:
         row.loc[0, format_col] = 1
 
-    # Day
+
+    # Day dummy
+
     day_col = f"Day of Week_{day}"
+
     if day_col in row.columns:
         row.loc[0, day_col] = 1
 
-    # Topics
+
+    # Topic flags
+
     selected_topics = selected_topics or []
 
     for topic in selected_topics:
         if topic in row.columns:
             row.loc[0, topic] = 1
 
+
     return row
+
+
+# ============================================================
+# ANALYSE BUTTON
+# ============================================================
+
+st.markdown("###")
+
+analyse_clicked = st.button(
+    "Analyse Post",
+    type="primary",
+    use_container_width=True
+)
 
 
 # ============================================================
 # PREDICTION
 # ============================================================
 
-def analyse_post(
-    account,
-    platform,
-    post_format,
-    day,
-    hour,
-    posting_frequency,
-    followers,
-    selected_topics
-):
-
-    if followers is None or followers <= 0:
-        return (
-            "### Please enter the current follower count.",
-            ""
-        )
+if analyse_clicked:
 
     row = build_model_row(
-        account,
-        platform,
-        post_format,
-        day,
-        hour,
-        posting_frequency,
-        followers,
-        selected_topics
+        account=account,
+        platform=platform,
+        post_format=post_format,
+        day=day,
+        hour=hour,
+        posting_frequency=posting_frequency,
+        followers=followers,
+        selected_topics=selected_topics
     )
+
 
     probability = float(
         final_clf.predict_proba(row)[0, 1]
@@ -156,6 +334,8 @@ def analyse_post(
 
     pct = probability * 100
 
+
+    # Human-readable likelihood band
 
     if probability < 0.35:
         level = "Lower historical likelihood"
@@ -171,216 +351,83 @@ def analyse_post(
 
 
     if predicted_class == 1:
-        flag = "The model flags this as a potential Top-25% post."
+
+        flag = (
+            "The model flags this as a potential Top-25% post."
+        )
+
     else:
-        flag = "The model does not currently flag this as a Top-25% post."
+
+        flag = (
+            "The model does not currently flag this as a Top-25% post."
+        )
 
 
-    result = f"""
-# {pct:.1f}%
+    # ========================================================
+    # RESULT CARD
+    # ========================================================
 
-### Estimated Top-25% probability
-
-**{level}**
-
-{flag}
-"""
-
-
-    topics_text = (
-        ", ".join(selected_topics)
-        if selected_topics
-        else "None selected"
-    )
-
-    details = f"""
-### Inputs used
-
-**Account:** {account}  
-**Platform:** {platform}  
-**Format:** {post_format}  
-**Day:** {day}  
-**Posting time:** {int(hour):02d}:00  
-**Posting frequency:** {posting_frequency:.1f} posts/week  
-**Current followers:** {int(followers):,}  
-**Topics:** {topics_text}
-
----
-
-This tool uses historical SDLP social-media performance patterns to support
-pre-post decision making. The output should be treated as a decision-support
-signal rather than a guarantee of future engagement.
-"""
-
-    return result, details
-
-
-# ============================================================
-# SDLP DESIGN
-# ============================================================
-
-css = """
-.gradio-container {
-    max-width: 1100px !important;
-    margin: auto !important;
-    font-family: Arial, Helvetica, sans-serif;
-}
-
-#sdlp-header {
-    background: linear-gradient(135deg, #006747, #004c36);
-    color: white;
-    padding: 32px;
-    border-radius: 20px;
-    margin-bottom: 20px;
-}
-
-#sdlp-header h1,
-#sdlp-header p {
-    color: white !important;
-}
-
-#result-card {
-    padding: 15px;
-    border-radius: 18px;
-}
-
-footer {
-    visibility: hidden;
-}
-"""
-
-
-with gr.Blocks(
-    title="SDLP Post Performance Checker",
-    css=css
-) as demo:
-
-    gr.Markdown(
-        """
-# SDLP Post Performance Checker
-
-### Data-driven pre-post decision support
-
-Enter the details of a proposed Facebook or Instagram post to estimate
-whether its characteristics are similar to historically high-performing
-SDLP posts.
-
-**For the most accurate result, enter the account's current follower count.**
+    st.markdown(
+        f"""
+        <div class="result-card">
+            <h1>{pct:.1f}%</h1>
+            <h3>Estimated Top-25% probability</h3>
+            <p><strong>{level}</strong></p>
+            <p>{flag}</p>
+        </div>
         """,
-        elem_id="sdlp-header"
+        unsafe_allow_html=True
     )
 
 
-    with gr.Row():
+    # ========================================================
+    # INPUT SUMMARY
+    # ========================================================
 
-        with gr.Column():
+    st.subheader("Inputs used")
 
-            gr.Markdown("### Post details")
+    summary_left, summary_right = st.columns(2)
 
-            account = gr.Dropdown(
-                accounts,
-                value="Social Democratic and Labour Party",
-                label="Account"
+    with summary_left:
+        st.write(f"**Account:** {account}")
+        st.write(f"**Platform:** {platform}")
+        st.write(f"**Format:** {post_format}")
+        st.write(f"**Day:** {day}")
+
+    with summary_right:
+        st.write(f"**Posting time:** {hour:02d}:00")
+        st.write(
+            f"**Posting frequency:** {posting_frequency:.1f} posts/week"
+        )
+        st.write(
+            f"**Current followers:** {followers:,}"
+        )
+
+        if selected_topics:
+            st.write(
+                "**Topics:** " + ", ".join(selected_topics)
             )
-
-            platform = gr.Radio(
-                platforms,
-                value="Facebook",
-                label="Platform"
-            )
-
-            followers = gr.Number(
-                label="Current follower count",
-                precision=0,
-                info="Enter the live follower count for the selected account and platform."
-            )
-
-            post_format = gr.Dropdown(
-                formats,
-                value="Image",
-                label="Post format"
-            )
+        else:
+            st.write("**Topics:** None selected")
 
 
-        with gr.Column():
+    # ========================================================
+    # INTERPRETATION NOTE
+    # ========================================================
 
-            gr.Markdown("### Timing and content")
-
-            day = gr.Dropdown(
-                days,
-                value="Monday",
-                label="Day of week"
-            )
-
-            hour = gr.Slider(
-                minimum=0,
-                maximum=23,
-                value=12,
-                step=1,
-                label="Planned posting hour"
-            )
-
-            posting_frequency = gr.Slider(
-                minimum=0,
-                maximum=30,
-                value=7,
-                step=0.5,
-                label="Posting frequency (posts/week)"
-            )
-
-            topics = gr.CheckboxGroup(
-                choices=topic_flag_cols,
-                label="Political topic(s)",
-                info="Select all that apply."
-            )
-
-
-    analyse = gr.Button(
-        "Analyse Post",
-        variant="primary"
+    st.info(
+        "This result is based on historical SDLP social-media performance patterns. "
+        "It should be used as a decision-support signal rather than a guarantee "
+        "of future engagement."
     )
 
 
-    gr.Markdown("---")
+# ============================================================
+# FOOTER
+# ============================================================
 
-    with gr.Row():
+st.markdown("---")
 
-        with gr.Column():
-            result = gr.Markdown(
-                elem_id="result-card"
-            )
-
-        with gr.Column():
-            details = gr.Markdown()
-
-
-    analyse.click(
-        fn=analyse_post,
-        inputs=[
-            account,
-            platform,
-            post_format,
-            day,
-            hour,
-            posting_frequency,
-            followers,
-            topics
-        ],
-        outputs=[
-            result,
-            details
-        ]
-    )
-
-
-    gr.Markdown(
-        """
----
-**About this tool:** Developed as part of an MSc Strategic Business Analytics
-research project using historical SDLP Facebook and Instagram data.
-"""
-    )
-
-
-if __name__ == "__main__":
-    demo.launch()
+st.caption(
+    "Developed as part of an MSc Strategic Business Analytics research project."
+)
